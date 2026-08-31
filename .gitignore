@@ -1,0 +1,7 @@
+build/
+.vscode/
+
+# Local working notes, not part of the published project
+docs/README.md
+docs/progress_log.md
+docs/warstories.md
