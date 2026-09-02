@@ -119,7 +119,7 @@ Device name: `Tremor Monitor`. One custom GATT service (UUID `c9a00000-1fdd-4a7e
 3. DSP pipeline: windowing, FFT, feature extraction, classification, validation against known motion.
 4. Episode state machine and a BLE GATT service for periodic reporting.
 
-Stretch, time permitting: MCUboot based secure firmware update over UART then BLE with rollback and anti rollback testing, orientation fusion for axis specific analysis, local data logging to flash, power management and current draw measurement, continuous integration.
+This is the full scope of the project. No firmware update mechanism is planned; the interesting parts of that problem (partition layout, signing, rollback) are a separate project on their own, not a natural extension of this one.
 
 ## Current status
 
@@ -129,7 +129,6 @@ Stretch, time permitting: MCUboot based secure firmware update over UART then BL
 - [x] DSP pipeline and classification algorithm, confirmed on hardware
 - [x] Episode state machine
 - [ ] BLE GATT service, periodic reporting (written, not yet confirmed on hardware)
-- [ ] MCUboot secure update (stretch, time permitting)
 
 ## Building and flashing
 
