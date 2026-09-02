@@ -16,16 +16,11 @@ struct tremor_window_result {
 	float tremor_band_power;
 	float dyskinesia_band_power;
 	float broadband_power;
-	float spectral_entropy;  /* normalized to [0, 1]; informational, not gating */
-	float relative_power;    /* peak-band power / reference-band power; primary
-				   * concentration metric -- see pipeline.c for the
-				   * published methodology this is based on
-				   */
-	float gyro_rms;           /* rad/s; secondary activity-gate signal -- rejects
-				    * deliberate rotation (e.g. a hand wave) that the
-				    * accel-only concentration metric alone can't
-				    * distinguish from tremor
-				    */
+	float spectral_entropy; /* normalized to [0, 1]; informational, not gating */
+	float relative_power;   /* peak-band / reference-band power; the primary
+				  * classification metric, see pipeline.c
+				  */
+	float gyro_rms;          /* rad/s; secondary activity-gate signal */
 	float severity;          /* == relative_power, clamped to [0, 1] */
 };
 

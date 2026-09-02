@@ -1,21 +1,21 @@
 # Tremor and Dyskinesia Detection Wearable
 
-A wrist worn embedded system built on Zephyr RTOS that detects Parkinsonian tremor and dyskinesia from a wrist mounted IMU, classifies movement episodes in real time on the device, streams severity data over Bluetooth Low Energy, and supports secure over the air firmware updates through MCUboot.
+A wrist worn embedded system built on Zephyr RTOS that detects Parkinsonian tremor and dyskinesia from a wrist mounted IMU, classifies movement episodes in real time on the device, and reports them over Bluetooth Low Energy.
 
 ## Problem statement
 
 Parkinson's disease treatment is a balancing act. Dopamine therapy reduces tremor, a rhythmic oscillation typically in the 3 to 5 Hz range in a dominant limb. Too much dopamine causes dyskinesia instead, an involuntary, less rhythmic, dance like movement typically in the 5 to 7 Hz range. Clinicians need objective, continuous data on both symptoms to titrate medication correctly and keep a patient in the "on" state without tipping into dyskinesia.
 
-This project builds a wearable that captures motion data from an onboard IMU, processes it on device with a real time DSP pipeline, and reports tremor and dyskinesia severity over BLE, with the ability to update the firmware in the field without physical access to the device.
+This project builds a wearable that captures motion data from an onboard IMU, classifies it on device with a real time DSP pipeline, and reports tremor and dyskinesia activity over BLE as a periodic summary, the way a long term monitoring wearable should behave rather than a live data logger.
 
 ## Origin
 
-The project started from a university embedded systems course assignment: detect tremor and dyskinesia from a single accelerometer and gyroscope on a development board, using an FFT over 3 second windows and onboard indicators, with constraints such as no serial output and no additional hardware. That assignment is the origin of the idea, not the specification for this version. This project drops the classroom constraints and rebuilds the system as a production style embedded application, with custom driver development, RTOS level architecture, real time signal processing, and a secure boot and update chain.
+The project started from a university embedded systems course assignment: detect tremor and dyskinesia from a single accelerometer and gyroscope on a development board, using an FFT over 3 second windows and onboard indicators, with constraints such as no serial output and no additional hardware. That assignment is the origin of the idea, not the specification for this version. This project drops the classroom constraints and rebuilds the system as a production style embedded application, with custom driver development, RTOS level architecture, real time signal processing grounded in published methodology, and a BLE reporting protocol.
 
 ## Hardware
 
 - Target board: ST B-L475E-IOT01A IoT Discovery Kit. STM32L475VG, Cortex-M4F at 80 MHz, 1 MB flash, 128 KB SRAM, hardware FPU.
-- IMU: LSM6DSL 6 axis accelerometer and gyroscope on I2C, with an onboard hardware FIFO and a watermark interrupt line wired to a GPIO.
+- IMU: LSM6DSL 6 axis accelerometer and gyroscope on I2C, onboard hardware FIFO with a watermark interrupt wired to a GPIO. Both accelerometer and gyroscope are sampled.
 - Bluetooth: SPBTLE-RF (BlueNRG-MS) module, HCI over SPI.
 - Debug and flash probe: onboard ST-LINK/V2-1, SWD and virtual COM port.
 
@@ -24,35 +24,52 @@ Zephyr board name: `disco_l475_iot1`.
 ## System architecture
 
 ```
-IMU (I2C, FIFO with watermark interrupt)
+LSM6DSL FIFO (accel + gyro, watermark interrupt)
       |
-      v   interrupt fires, handler only signals a semaphore
-acquisition thread (high priority)
+      v   GPIO interrupt fires, ISR only signals a semaphore
+driver's own acquisition thread
       |   blocking I2C burst read of the FIFO
-      |   timestamp samples, convert to g
+      |   invokes the app's registered sensor trigger callback
+      |   once per sample (gyro + accel already latched)
       v
-ring buffer
+app trigger callback -> sample queue (k_msgq)
       |
       v
-DSP thread (medium priority)
-      |   1. gravity removal (high pass filter)
+DSP thread
+      |   1. gravity removal (high pass filter per axis)
       |   2. magnitude vector, orientation independent
-      |   3. Hann window
-      |   4. real FFT (CMSIS-DSP)
-      |   5. feature extraction: peak frequency, band power,
-      |      broadband power, spectral entropy
-      |   6. activity gate, rejects voluntary motion
-      |   7. per window classification
+      |   3. 50% overlapping Hann window, real FFT (CMSIS-DSP)
+      |   4. peak frequency (parabolic interpolation), band powers,
+      |      relative spectral concentration, gyro RMS
+      |   5. per window classification: none, tremor, dyskinesia,
+      |      or activity (rejected)
       v
 episode state machine (hysteresis)
       |   idle -> candidate (K of N windows) -> episode -> cooldown
-      |   record: start time, duration, dominant frequency, severity
+      |   record: type, duration, dominant frequency, mean severity
       v
-BLE thread (low priority)
-      GATT notify: live severity and episode events
+BLE GATT service
+      episode characteristic: notified when an episode closes
+      report characteristic: notified periodically (default every
+      5 minutes) with episode counts, durations, and mean severity
+      since the last report, not a live per window stream
 ```
 
-The interrupt handler does no I2C work. It only signals a semaphore. Zephyr's I2C transfer API is blocking and can only be called from thread context, so a dedicated acquisition thread does the actual burst read once it wakes up. This keeps the CPU idle between watermark events and avoids doing any bus work in interrupt context.
+The FIFO watermark interrupt handler does no I2C work, it only signals a semaphore. Zephyr's I2C transfer API is blocking and can only be called from thread context, so the driver's own dedicated thread does the actual burst read once it wakes up. This keeps the CPU idle between watermark events and avoids doing any bus work in interrupt context.
+
+## Classification algorithm
+
+Each analysis window is classified by spectral concentration rather than absolute power. For the dominant peak frequency in a window, the pipeline computes
+
+```
+relative_power = power(peak +/- 0.5 Hz) / power(0.5 to 15 Hz)
+```
+
+and classifies a window as active tremor or dyskinesia when this ratio clears a threshold. The intuition: genuine tremor or dyskinesia concentrates power around one frequency, while ordinary movement spreads power across a low frequency band and a higher "physiological tremor" band instead. This is scale invariant, unlike an absolute power threshold, so it is not sensitive to grip strength or how tightly the device is worn. The method and threshold are from a 2026 study on continuous accelerometry based tremor detection (Sensors, doi:10.3390/s26051459), not invented from scratch.
+
+Once a window is flagged as concentrated, which frequency band the peak falls in decides tremor versus dyskinesia, using the project's configurable band edges.
+
+A second gate uses the gyroscope: genuine tremor barely rotates the wrist, while a deliberate voluntary motion at a similar frequency, such as a wave, involves much more net rotation. A window with excess gyroscope RMS energy is rejected as activity even if its accelerometer spectrum looked concentrated. This closes a real gap: accelerometer data alone cannot distinguish involuntary tremor from a voluntary gesture at the same frequency.
 
 ## Key design decisions
 
@@ -60,24 +77,45 @@ The interrupt handler does no I2C work. It only signals a semaphore. Zephyr's I2
 
 **FIFO plus watermark interrupt instead of per sample interrupts or polling.** The IMU batches samples in hardware, so the CPU wakes once per batch of samples instead of once per sample, which keeps the interrupt rate low and leaves room for low power operation later.
 
-**Magnitude vector instead of full orientation fusion in the first version.** The magnitude of the acceleration vector is invariant to wrist rotation, which is enough for tremor and dyskinesia detection without needing a quaternion based orientation estimate. Orientation fusion is a planned addition that enables axis specific analysis, such as distinguishing rest tremor from postural tremor.
+**Magnitude vector instead of full orientation fusion.** The magnitude of the acceleration vector is invariant to wrist rotation, which is enough for tremor and dyskinesia detection without a quaternion based orientation estimate. Orientation fusion is a stretch goal that would enable axis specific analysis, such as distinguishing rest tremor from postural tremor.
 
-**Activity gate before classification.** Ordinary daily movement such as walking or reaching produces energy in the same frequency range as tremor. Rejecting windows with high broadband energy or high low frequency energy before classification keeps the false positive rate down.
+**Episode state machine with hysteresis instead of per window decisions.** A single noisy classification window is not a diagnosis. Requiring several consecutive positive windows to enter an episode, and a cooldown period to exit one, converts noisy per window output into stable episode records.
 
-**Episode state machine with hysteresis instead of per window decisions.** A single noisy classification window is not a diagnosis. Requiring several consecutive positive windows to enter an episode, and a cooldown period to exit one, converts noisy per window output into stable episode records with a start time, duration, dominant frequency, and severity.
+**Frequency bands are configurable through Kconfig rather than hardcoded.** The original classroom assignment used 3 to 5 Hz for tremor and 5 to 7 Hz for dyskinesia. Clinical literature describes a broader tremor range, roughly 3 to 9 Hz centered around 4 to 6 Hz, and describes dyskinesia as less rhythmic rather than simply higher frequency. Keeping the bands as build time configuration rather than hardcoded constants makes that discrepancy something to tune, not something baked in.
 
-**Frequency bands are configurable through Kconfig rather than hardcoded.** The original classroom assignment used 3 to 5 Hz for tremor and 5 to 7 Hz for dyskinesia. Clinical literature describes a broader tremor range, roughly 3 to 9 Hz centered around 4 to 6 Hz, and describes dyskinesia as less rhythmic rather than simply higher frequency. That argues for separating the two using a regularity measure such as spectral entropy or peak sharpness, in addition to band power.
-
-**Secure firmware update is treated as a property of the finished product, not a separate demo.** The interesting engineering problems, such as partial writes, power loss during an update, rollback, and key management, only matter once there is a real application being updated.
+**BLE reports are periodic, not continuous.** A battery powered wearable should not hold a radio connection busy with a notification every second. The report characteristic aggregates episode counts, durations, and mean severity and sends one summary on a configurable interval, similar to how commercial tremor monitors such as the Parkinson's KinetiGraph report a periodic severity score rather than a continuous stream.
 
 **Modularity and portability are treated as hard requirements.** Board specific and sensor specific details are kept behind devicetree, Kconfig, and a stable driver API, so switching to a different board or a different IMU part should mean changing configuration and swapping a driver, not rewriting the signal processing, state machine, or BLE application logic.
+
+## BLE protocol
+
+Device name: `Tremor Monitor`. One custom GATT service (UUID `c9a00000-1fdd-4a7e-9ab0-b1a9c0ab0001`) with two notify characteristics.
+
+**Report characteristic** (`c9a00001-...`), notified periodically (`CONFIG_TREMOR_REPORT_INTERVAL_MIN`, default 5 minutes), 7 bytes little endian:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | tremor episode count | since the last report |
+| 1 | dyskinesia episode count | since the last report |
+| 2-3 | tremor duration | seconds, u16 |
+| 4-5 | dyskinesia duration | seconds, u16 |
+| 6 | mean severity | 0 to 100 |
+
+**Episode characteristic** (`c9a00002-...`), notified when an episode closes, 6 bytes little endian:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | type | 1 = tremor, 2 = dyskinesia |
+| 1-2 | duration | seconds, u16 |
+| 3-4 | dominant frequency | deci-Hz, u16 |
+| 5 | mean severity | 0 to 100 |
 
 ## Roadmap
 
 1. Board bring up and boot sequence understanding.
 2. Custom LSM6DSL driver: devicetree binding, FIFO and interrupt handling, interrupt to thread handoff.
-3. DSP pipeline: windowing, FFT, feature extraction, activity gate, validation against known motion.
-4. Episode state machine and a BLE GATT service for severity and episode notifications.
+3. DSP pipeline: windowing, FFT, feature extraction, classification, validation against known motion.
+4. Episode state machine and a BLE GATT service for periodic reporting.
 
 Stretch, time permitting: MCUboot based secure firmware update over UART then BLE with rollback and anti rollback testing, orientation fusion for axis specific analysis, local data logging to flash, power management and current draw measurement, continuous integration.
 
@@ -85,10 +123,10 @@ Stretch, time permitting: MCUboot based secure firmware update over UART then BL
 
 - [x] Toolchain and board bring up, blink and log output confirmed
 - [x] I2C communication with the LSM6DSL confirmed by reading the WHO_AM_I register
-- [x] Custom LSM6DSL driver, FIFO watermark interrupt, confirmed on hardware
-- [x] DSP pipeline, confirmed on hardware
+- [x] Custom LSM6DSL driver, FIFO watermark interrupt, gyroscope, confirmed on hardware
+- [x] DSP pipeline and classification algorithm, confirmed on hardware
 - [x] Episode state machine
-- [ ] BLE GATT service (written, not yet confirmed on hardware)
+- [ ] BLE GATT service, periodic reporting (written, not yet confirmed on hardware)
 - [ ] MCUboot secure update (stretch, time permitting)
 
 ## Building and flashing
@@ -105,17 +143,17 @@ west flash --runner openocd
 ```
 tremor_detection/
   CMakeLists.txt
+  Kconfig                DSP pipeline and BLE report tunables
   prj.conf
-  boards/        board specific overlays
-  drivers/        out of tree LSM6DSL driver (planned)
+  drivers/
+    lsm6dsl_custom/       out of tree LSM6DSL driver
   src/
-    main.c
-    acquisition.c   (planned)
-    dsp/            windowing, FFT, feature extraction (planned)
-    episode_fsm.c    (planned)
-    ble_service.c    (planned)
-  tests/          unit tests on recorded sensor data (planned)
-  docs/           reference material and datasheets
+    main.c                acquisition glue, DSP thread, BLE report scheduling
+    dsp/
+      pipeline.c           windowing, FFT, classification
+    episode_fsm.c          hysteresis state machine
+    ble_service.c          GATT service
+  docs/                   reference material and datasheets
 ```
 
 ## License

@@ -62,4 +62,13 @@ config TREMOR_EPISODE_COOLDOWN_WINDOWS
 	  Number of consecutive negative windows required to exit an
 	  episode.
 
+config TREMOR_REPORT_INTERVAL_MIN
+	int "BLE summary report interval (minutes)"
+	default 5
+	help
+	  How often to send an aggregated BLE report (episode counts,
+	  durations, mean severity) instead of notifying every window.
+	  5 min for testing; a real deployment would use something like 360
+	  (6h), same code either way.
+
 endmenu

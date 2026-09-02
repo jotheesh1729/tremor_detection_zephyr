@@ -5,6 +5,7 @@
 #include <zephyr/logging/log.h>
 
 #include <stdint.h>
+#include <string.h>
 
 #include "ble_service.h"
 #include "dsp/pipeline.h"
@@ -19,10 +20,9 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
  */
 static const struct device *const accel = DEVICE_DT_GET(DT_ALIAS(accel0));
 
-/* Immediate visual feedback while there is no BLE yet: led0 lit for the
- * duration of any window classified as tremor, led1 for dyskinesia. Both
- * aliases are on-board LEDs already defined by the board's own devicetree,
- * so no overlay is needed.
+/* Local visual feedback, independent of BLE: led0 lit for the duration of
+ * any window classified as tremor, led1 for dyskinesia. Both aliases are
+ * on-board LEDs already defined by the board's own devicetree.
  */
 static const struct gpio_dt_spec led_tremor = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_dyskinesia = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
@@ -83,6 +83,49 @@ static const char *classification_str(enum tremor_classification c)
 	}
 }
 
+/* Stats accumulated between BLE reports: periodic radio traffic instead
+ * of one notify per window (~1.2s cadence) keeps power draw sane for a
+ * battery-powered wearable.
+ */
+static struct tremor_report pending_report;
+static uint32_t report_severity_sum_pct;
+static int64_t next_report_at_ms;
+
+static void report_episode(const struct episode_record *record)
+{
+	uint16_t duration_s = (uint16_t)(record->duration_ms / 1000);
+	uint8_t severity_pct = (uint8_t)(record->mean_severity * 100.0f);
+
+	if (record->type == EPISODE_TYPE_TREMOR) {
+		pending_report.tremor_episodes++;
+		pending_report.tremor_duration_s += duration_s;
+	} else {
+		pending_report.dyskinesia_episodes++;
+		pending_report.dyskinesia_duration_s += duration_s;
+	}
+	report_severity_sum_pct += severity_pct;
+}
+
+static void send_report_if_due(void)
+{
+	int64_t now = k_uptime_get();
+	uint8_t total_episodes;
+
+	if (now < next_report_at_ms) {
+		return;
+	}
+	next_report_at_ms = now + (int64_t)CONFIG_TREMOR_REPORT_INTERVAL_MIN * 60 * 1000;
+
+	total_episodes = pending_report.tremor_episodes + pending_report.dyskinesia_episodes;
+	pending_report.mean_severity_pct =
+		total_episodes > 0 ? (uint8_t)(report_severity_sum_pct / total_episodes) : 0;
+
+	ble_service_notify_report(&pending_report);
+
+	memset(&pending_report, 0, sizeof(pending_report));
+	report_severity_sum_pct = 0;
+}
+
 static void dsp_thread(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1);
@@ -91,6 +134,7 @@ static void dsp_thread(void *p1, void *p2, void *p3)
 
 	tremor_pipeline_init();
 	episode_fsm_init();
+	next_report_at_ms = k_uptime_get() + (int64_t)CONFIG_TREMOR_REPORT_INTERVAL_MIN * 60 * 1000;
 
 	while (1) {
 		struct accel_sample sample;
@@ -111,6 +155,10 @@ static void dsp_thread(void *p1, void *p2, void *p3)
 			(double)result.dyskinesia_band_power, (double)result.spectral_entropy,
 			(double)result.gyro_rms, (double)result.severity);
 
+		/* ">name:value" lines are picked up by a live serial plotter
+		 * during development (Teleplot); classification is 0=none
+		 * 1=tremor 2=dyskinesia 3=activity.
+		 */
 		printk(">peak_freq_hz:%.3f\n", (double)result.peak_freq_hz);
 		printk(">relative_power:%.3f\n", (double)result.relative_power);
 		printk(">tremor_power:%.4f\n", (double)result.tremor_band_power);
@@ -118,15 +166,10 @@ static void dsp_thread(void *p1, void *p2, void *p3)
 		printk(">entropy:%.3f\n", (double)result.spectral_entropy);
 		printk(">gyro_rms:%.3f\n", (double)result.gyro_rms);
 		printk(">severity:%.3f\n", (double)result.severity);
-		/* 0=none 1=tremor 2=dyskinesia 3=activity -- plotted as a step
-		 * trace so the actual decision is visible next to the numbers
-		 * that fed it, not just in the text log.
-		 */
 		printk(">classification:%d\n", (int)result.classification);
 
 		gpio_pin_set_dt(&led_tremor, result.classification == TREMOR_CLASS_TREMOR);
 		gpio_pin_set_dt(&led_dyskinesia, result.classification == TREMOR_CLASS_DYSKINESIA);
-		ble_service_notify_severity(&result);
 
 		if (episode_fsm_update(&result, &record)) {
 			LOG_INF("episode closed: type=%s duration=%lldms freq=%.2fHz "
@@ -135,7 +178,10 @@ static void dsp_thread(void *p1, void *p2, void *p3)
 				record.duration_ms, (double)record.dominant_freq_hz,
 				(double)record.mean_severity);
 			ble_service_notify_episode(&record);
+			report_episode(&record);
 		}
+
+		send_report_if_due();
 	}
 }
 

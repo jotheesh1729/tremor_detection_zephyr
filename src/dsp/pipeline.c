@@ -14,65 +14,41 @@ LOG_MODULE_REGISTER(tremor_pipeline, LOG_LEVEL_INF);
 #define SAMPLE_RATE   CONFIG_TREMOR_SAMPLE_RATE_HZ
 #define NUM_BINS      (WINDOW_SIZE / 2 + 1) /* real FFT: bins 0..N/2 inclusive */
 
-/* 50% overlap between successive windows: a window is re-analyzed every
- * HOP_SIZE new samples instead of every WINDOW_SIZE. Cheap on this chip
- * (a few tens of thousands of float copies per second) and meaningfully
- * improves temporal resolution -- see "Parkinson's Disease Tremor
- * Detection in the Wild Using Wearable Accelerometers" (Sensors 2020,
- * PMC7602495), which uses 3 s windows with 2 s overlap (roughly 33% hop).
- * 50% here is the more standard/simpler STFT convention; worth tuning
- * toward their heavier overlap later if smoother episode boundaries turn
- * out to matter more than the extra CPU cost.
+/* 50% overlap between successive windows (re-analyze every HOP_SIZE
+ * samples, not every WINDOW_SIZE): negligible extra CPU cost, better
+ * temporal resolution on episode boundaries.
  */
 #define HOP_SIZE (WINDOW_SIZE / 2)
 
-/*
- * Gravity removal: a one-pole high-pass filter per axis, cutoff well below
- * the tremor band, so gravity's (near-)DC contribution is filtered out on
- * each axis before the orientation-invariant magnitude is computed. This is
- * what lets v1 skip orientation estimation entirely (see project README,
- * "Magnitude vector, not orientation fusion").
+/* One-pole high-pass per axis, cutoff well below the tremor band, removes
+ * gravity's near-DC bias before the orientation-invariant magnitude is
+ * computed. This is what lets the pipeline skip orientation estimation.
  */
 #define HPF_CUTOFF_HZ 0.5f
 
-/*
- * Classification is based on spectral concentration, not absolute power:
- * "Continuous Accelerometry-Based Tremor Detection During Daily Living"
- * (Sensors 2026, doi:10.3390/s26051459) computes
- *
- *     P_rel = P(peak_freq +/- PEAK_BAND_HALFWIDTH_HZ) / P(REFERENCE_LOW_HZ..REFERENCE_HIGH_HZ)
- *
- * and classifies a window as tremor when P_rel >= 0.40 (84.8% sensitivity,
- * 96.5% specificity, 90.8% accuracy in their validation). The intuition:
- * a genuine tremor/dyskinesia window has power concentrated around one
- * peak; ordinary movement has power spread across a low-frequency
- * "voluntary movement" band and a high-frequency "physiological tremor"
- * band instead of concentrated at one frequency. This directly replaces
- * what was previously two separately-tuned, unvalidated heuristics (a
- * low-frequency power ratio gate and an absolute power floor) with one
- * metric that has a published threshold, and is amplitude-scale-invariant
- * (robust to grip strength / wearing tightness / individual variation,
- * unlike an absolute power threshold).
+/* Classification is driven by spectral concentration, not absolute power:
+ * P_rel = P(peak +/- PEAK_BAND_HALFWIDTH_HZ) / P(REFERENCE_LOW_HZ..REFERENCE_HIGH_HZ),
+ * thresholded at REL_POWER_THRESHOLD. Genuine tremor/dyskinesia concentrates
+ * power around one frequency; ordinary movement spreads it across a
+ * low-frequency band and a higher "physiological tremor" band instead.
+ * Scale-invariant, unlike an absolute power threshold (robust to grip
+ * strength / wearing tightness / individual variation). Method and
+ * threshold from Sensors 2026, doi:10.3390/s26051459.
  */
 #define REFERENCE_LOW_HZ          0.5f
 #define REFERENCE_HIGH_HZ         15.0f
 #define PEAK_BAND_HALFWIDTH_HZ    0.5f
 #define REL_POWER_THRESHOLD       0.40f
 
-/* Secondary hard safety cap, independent of the concentration metric:
- * gross motion (e.g. dropping/picking up the device) can be transiently
- * concentrated in-band by coincidence. Reasoned starting point, not
- * empirically validated -- watch Teleplot's broadband_power against real
- * deliberate gross motion to see if this needs adjusting.
+/* Hard safety cap, independent of the concentration metric: gross motion
+ * (e.g. dropping the device) can be transiently concentrated in-band by
+ * coincidence. Not empirically calibrated.
  */
 #define BROADBAND_RMS_CEILING 4.0f /* m/s^2 RMS */
 
-/* ponytail: 2.0 was too tight -- a mere 5deg sweep at 5Hz already hits
- * ~1.9 rad/s RMS, so it was rejecting real tremor-scale motion, not just
- * waves. 5.0 gives tremor-scale motion headroom while a real wave
- * (~45deg sweep, ~7 rad/s RMS) still trips it. Still a rough estimate, not
- * measured -- recalibrate against real gyro_rms readings once there's
- * hardware data to tune against.
+/* Second activity-gate signal: genuine tremor barely rotates the wrist,
+ * while a deliberate hand motion at the same frequency involves much more
+ * rotation. Not empirically calibrated.
  */
 #define GYRO_RMS_CEILING 5.0f /* rad/s */
 
@@ -83,10 +59,9 @@ static float hpf_prev_raw[3];
 static float hpf_prev_out[3];
 
 /* Sliding windows: shifted left by one sample per call, new sample
- * appended at the end, so they always hold the most recent WINDOW_SIZE
- * samples in time order. Re-analyzed every HOP_SIZE samples (50% overlap).
- * gyro_window_buf only ever needs a time-domain RMS, not a spectrum, so it
- * skips the FFT/Hann-window machinery entirely.
+ * appended at the end, always holding the most recent WINDOW_SIZE samples
+ * in time order. gyro_window_buf only needs a time-domain RMS, not a
+ * spectrum, so it skips the FFT/Hann-window machinery entirely.
  */
 static float window_buf[WINDOW_SIZE];
 static float gyro_window_buf[WINDOW_SIZE];
@@ -193,8 +168,8 @@ static inline float band_power_hz(float hz_low, float hz_high)
 
 /* Shannon entropy of the normalized power spectrum over [bin_low, bin_high],
  * normalized to [0, 1] by dividing by log(number of bins considered).
- * Informational only (logged/Teleplotted) -- classification is driven by
- * the relative-power concentration metric below, not this.
+ * Informational only -- classification uses relative-power concentration,
+ * not this.
  */
 static float spectral_entropy(int bin_low, int bin_high)
 {

@@ -105,14 +105,11 @@ static DEVICE_API(sensor, lsm6dsl_custom_api) = {
 	.trigger_set = lsm6dsl_custom_trigger_set,
 };
 
-/*
- * Drains whatever is currently in the FIFO in one I2C burst read (the
- * FIFO output register auto-increments per read), then walks the drained
- * samples and invokes the app's registered trigger handler once per
- * sample. This runs in the driver's own thread (lsm6dsl_custom_thread),
- * never in interrupt context: i2c_transfer() is blocking and thread-context
- * only in Zephyr, which is why the GPIO ISR below does nothing but signal
- * a semaphore.
+/* Drains whatever is currently in the FIFO in one I2C burst read, then
+ * invokes the app's registered trigger handler once per sample. Runs in
+ * the driver's own thread, never in interrupt context: i2c_transfer() is
+ * blocking and thread-context only in Zephyr, which is why the GPIO ISR
+ * below does nothing but signal a semaphore.
  */
 static void lsm6dsl_custom_drain_fifo(const struct device *dev)
 {
@@ -253,16 +250,11 @@ static int lsm6dsl_custom_init(const struct device *dev)
 		return ret;
 	}
 
-	/*
-	 * Arm the GPIO interrupt and start the servicing thread BEFORE
-	 * enabling FIFO collection below. The watermark interrupt is
-	 * edge-triggered: it only fires on the transition from below- to
-	 * at-watermark. If the FIFO were already running when the interrupt
-	 * gets armed, a fill that crosses the watermark in that window would
-	 * be a missed edge -- and since nothing would ever be draining the
-	 * FIFO, the watermark condition just sits there permanently true
-	 * with no further edge to catch. Net effect: total silence, no
-	 * error, forever. Arming first closes that race.
+	/* GPIO interrupt and servicing thread must be armed before FIFO
+	 * collection is enabled below. The watermark interrupt is
+	 * edge-triggered: if the FIFO starts filling before the interrupt is
+	 * armed, the crossing edge is missed, nothing ever drains the FIFO,
+	 * and no future edge occurs either -- permanent silence, no error.
 	 */
 	if (!device_is_ready(cfg->irq_gpio.port)) {
 		LOG_ERR("IRQ GPIO port not ready");
@@ -275,11 +267,8 @@ static int lsm6dsl_custom_init(const struct device *dev)
 		return ret;
 	}
 
-	/* Register the callback before arming the interrupt below: an edge
-	 * landing between "interrupt armed" and "callback registered" would
-	 * fire the port's shared ISR, find no callback in the list yet, and
-	 * the pending flag gets cleared with nobody told -- same missed-edge
-	 * problem as the FIFO-enable-order issue above, one level deeper.
+	/* Callback must be registered before the interrupt is armed below --
+	 * same missed-edge failure mode as above, one level deeper.
 	 */
 	gpio_init_callback(&data->gpio_cb, lsm6dsl_custom_gpio_callback, BIT(cfg->irq_gpio.pin));
 	ret = gpio_add_callback(cfg->irq_gpio.port, &data->gpio_cb);
@@ -290,16 +279,10 @@ static int lsm6dsl_custom_init(const struct device *dev)
 
 	k_sem_init(&data->fifo_sem, 0, 1);
 
-	/* STM32's EXTI hardware is edge-only -- GPIO_INT_LEVEL_ACTIVE returns
-	 * -ENOTSUP on this platform, confirmed on hardware. So this has to
-	 * stay edge-triggered, which reopens the missed-edge race described
-	 * above at a finer grain: if the watermark condition became true
-	 * (FIFO already at/above threshold) at any point before this exact
-	 * call arms the interrupt, there is no edge left to catch and the
-	 * driver goes silent forever with the FIFO stuck overrunning. Poll
-	 * the pin once immediately after arming and manually kick the
-	 * semaphore if it's already active, closing that race by hand
-	 * instead of relying on hardware level-sensitivity we don't have.
+	/* STM32's EXTI hardware is edge-only (GPIO_INT_LEVEL_ACTIVE returns
+	 * -ENOTSUP here), so the same missed-edge race can still occur at a
+	 * finer grain right at this call. Poll the pin once after arming and
+	 * manually kick the semaphore if it's already active.
 	 */
 	ret = gpio_pin_interrupt_configure_dt(&cfg->irq_gpio, GPIO_INT_EDGE_TO_ACTIVE);
 	if (ret < 0) {
