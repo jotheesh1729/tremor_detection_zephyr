@@ -128,7 +128,7 @@ This is the full scope of the project. No firmware update mechanism is planned; 
 - [x] Custom LSM6DSL driver, FIFO watermark interrupt, gyroscope, confirmed on hardware
 - [x] DSP pipeline and classification algorithm, confirmed on hardware
 - [x] Episode state machine
-- [ ] BLE GATT service, periodic reporting (written, not yet confirmed on hardware)
+- [x] BLE GATT service, periodic reporting, confirmed on hardware
 
 ## Building and flashing
 
