@@ -69,7 +69,9 @@ Each analysis window is classified by spectral concentration rather than absolut
 relative_power = power(peak +/- 0.5 Hz) / power(0.5 to 15 Hz)
 ```
 
-and classifies a window as active tremor or dyskinesia when this ratio clears a threshold. The intuition: genuine tremor or dyskinesia concentrates power around one frequency, while ordinary movement spreads power across a low frequency band and a higher "physiological tremor" band instead. This is scale invariant, unlike an absolute power threshold, so it is not sensitive to grip strength or how tightly the device is worn. The method and threshold are from a 2026 study on continuous accelerometry based tremor detection (Sensors, doi:10.3390/s26051459), not invented from scratch.
+and classifies a window as active tremor or dyskinesia when this ratio clears a threshold. The intuition: genuine tremor or dyskinesia concentrates power around one frequency, while ordinary movement spreads power across a low frequency band and a higher "physiological tremor" band instead. This is scale invariant, unlike an absolute power threshold, so it is not sensitive to grip strength or how tightly the device is worn. The method and threshold are from published research, not invented from scratch, see References.
+
+The 50 percent overlapping window choice is also grounded in published work on wearable tremor detection, see References.
 
 Once a window is flagged as concentrated, which frequency band the peak falls in decides tremor versus dyskinesia, using the project's configurable band edges.
 
@@ -160,6 +162,15 @@ tremor_detection/
 │   └── ble_service.c      GATT service
 └── docs/                  reference material, datasheets, architecture diagram
 ```
+
+## References
+
+- Martinez et al., "Continuous Accelerometry-Based Tremor Detection During Daily Living," Sensors, 2026. https://doi.org/10.3390/s26051459
+- San-Segundo et al., "Parkinson's Disease Tremor Detection in the Wild Using Wearable Accelerometers," Sensors, 2020. https://doi.org/10.3390/s20205817
+
+## Note on using an RTOS
+
+This project does not strictly need an RTOS. The sampling, DSP, and BLE work here could be done on bare metal or with a simpler scheduling approach. Zephyr RTOS was a deliberate choice, not a requirement of the problem. The tremor and dyskinesia detection problem itself was already familiar from the original class project, so this was a chance to learn Zephyr's driver model, devicetree, and RTOS architecture on a problem that did not also need to be learned from scratch.
 
 ## License
 
