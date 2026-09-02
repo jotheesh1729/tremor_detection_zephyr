@@ -23,6 +23,8 @@ Zephyr board name: `disco_l475_iot1`.
 
 ## System architecture
 
+![System architecture: LSM6DSL FIFO through the driver thread, DSP thread, episode state machine, to the BLE GATT service](docs/architecture.svg)
+
 ```
 LSM6DSL FIFO (accel + gyro, watermark interrupt)
       |
@@ -133,6 +135,8 @@ Stretch, time permitting: MCUboot based secure firmware update over UART then BL
 
 This project uses the Zephyr RTOS build system: west, CMake, devicetree, and Kconfig.
 
+Zephyr RTOS and its SDK must be installed first, with a west workspace set up. See the official [Zephyr Getting Started Guide](https://docs.zephyrproject.org/latest/develop/getting_started/index.html) ([zephyrproject.org](https://zephyrproject.org)). This project builds against that workspace, it does not vendor Zephyr itself.
+
 ```
 west build -b disco_l475_iot1
 west flash --runner openocd
@@ -153,7 +157,7 @@ tremor_detection/
       pipeline.c           windowing, FFT, classification
     episode_fsm.c          hysteresis state machine
     ble_service.c          GATT service
-  docs/                   reference material and datasheets
+  docs/                   reference material, datasheets, architecture diagram
 ```
 
 ## License
