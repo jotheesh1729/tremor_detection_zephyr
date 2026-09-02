@@ -1,0 +1,65 @@
+mainmenu "Tremor and Dyskinesia Detection"
+
+source "Kconfig.zephyr"
+
+menu "Tremor detection DSP pipeline"
+
+config TREMOR_WINDOW_SIZE
+	int "DSP window size (samples)"
+	default 256
+	help
+	  Number of accelerometer samples per analysis window. At the
+	  configured sample rate, this sets the FFT length and therefore the
+	  frequency bin width (sample rate / window size).
+
+config TREMOR_SAMPLE_RATE_HZ
+	int "Accelerometer sample rate (Hz)"
+	default 104
+	help
+	  Must match the LSM6DSL ODR configured in the driver
+	  (LSM6DSL_ODR_104HZ in drivers/lsm6dsl_custom). Used to convert FFT
+	  bin index to frequency in Hz.
+
+config TREMOR_BAND_LOW_HZ
+	int "Tremor band lower edge (Hz)"
+	default 3
+	help
+	  Default matches the original class assignment (3-5 Hz). Clinical
+	  literature describes a broader range, roughly 3-9 Hz centered
+	  around 4-6 Hz; kept configurable rather than hardcoded so this can
+	  be revisited once there is real motion data to test against.
+
+config TREMOR_BAND_HIGH_HZ
+	int "Tremor band upper edge (Hz)"
+	default 5
+
+config DYSKINESIA_BAND_LOW_HZ
+	int "Dyskinesia band lower edge (Hz)"
+	default 5
+
+config DYSKINESIA_BAND_HIGH_HZ
+	int "Dyskinesia band upper edge (Hz)"
+	default 7
+
+config TREMOR_EPISODE_WINDOW_COUNT
+	int "Episode hysteresis: window count (N)"
+	default 5
+	help
+	  Episode entry uses K-of-N: this many most recent windows are
+	  considered when deciding whether to enter an episode.
+
+config TREMOR_EPISODE_ENTER_COUNT
+	int "Episode hysteresis: positive windows required (K)"
+	default 3
+	help
+	  Number of positive (tremor or dyskinesia) windows required, out of
+	  the last TREMOR_EPISODE_WINDOW_COUNT windows, to enter an episode.
+
+config TREMOR_EPISODE_COOLDOWN_WINDOWS
+	int "Episode hysteresis: cooldown length (windows)"
+	default 3
+	help
+	  Number of consecutive negative windows required to exit an
+	  episode.
+
+endmenu

@@ -78,18 +78,18 @@ The interrupt handler does no I2C work. It only signals a semaphore. Zephyr's I2
 2. Custom LSM6DSL driver: devicetree binding, FIFO and interrupt handling, interrupt to thread handoff.
 3. DSP pipeline: windowing, FFT, feature extraction, activity gate, validation against known motion.
 4. Episode state machine and a BLE GATT service for severity and episode notifications.
-5. MCUboot based secure firmware update, over UART first and then BLE, including rollback and anti rollback testing.
 
-Stretch goals: orientation fusion for axis specific analysis, local data logging to flash, power management and current draw measurement, continuous integration.
+Stretch, time permitting: MCUboot based secure firmware update over UART then BLE with rollback and anti rollback testing, orientation fusion for axis specific analysis, local data logging to flash, power management and current draw measurement, continuous integration.
 
 ## Current status
 
 - [x] Toolchain and board bring up, blink and log output confirmed
 - [x] I2C communication with the LSM6DSL confirmed by reading the WHO_AM_I register
-- [ ] Custom LSM6DSL driver
-- [ ] DSP pipeline
-- [ ] Episode state machine and BLE service
-- [ ] MCUboot secure update
+- [x] Custom LSM6DSL driver, FIFO watermark interrupt, confirmed on hardware
+- [x] DSP pipeline, confirmed on hardware
+- [x] Episode state machine
+- [ ] BLE GATT service (written, not yet confirmed on hardware)
+- [ ] MCUboot secure update (stretch, time permitting)
 
 ## Building and flashing
 

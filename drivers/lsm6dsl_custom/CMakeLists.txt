@@ -1,0 +1,3 @@
+zephyr_library()
+zephyr_library_sources_ifdef(CONFIG_LSM6DSL_CUSTOM lsm6dsl_custom.c)
+zephyr_library_include_directories(.)

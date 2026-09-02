@@ -1,0 +1,4 @@
+name: lsm6dsl_custom
+build:
+  cmake: .
+  kconfig: Kconfig
