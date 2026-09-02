@@ -147,18 +147,18 @@ west flash --runner openocd
 
 ```
 tremor_detection/
-  CMakeLists.txt
-  Kconfig                DSP pipeline and BLE report tunables
-  prj.conf
-  drivers/
-    lsm6dsl_custom/       out of tree LSM6DSL driver
-  src/
-    main.c                acquisition glue, DSP thread, BLE report scheduling
-    dsp/
-      pipeline.c           windowing, FFT, classification
-    episode_fsm.c          hysteresis state machine
-    ble_service.c          GATT service
-  docs/                   reference material, datasheets, architecture diagram
+├── CMakeLists.txt
+├── Kconfig                DSP pipeline and BLE report tunables
+├── prj.conf
+├── drivers/
+│   └── lsm6dsl_custom/    out of tree LSM6DSL driver
+├── src/
+│   ├── main.c             acquisition glue, DSP thread, BLE report scheduling
+│   ├── dsp/
+│   │   └── pipeline.c     windowing, FFT, classification
+│   ├── episode_fsm.c      hysteresis state machine
+│   └── ble_service.c      GATT service
+└── docs/                  reference material, datasheets, architecture diagram
 ```
 
 ## License
