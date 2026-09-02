@@ -10,7 +10,9 @@ This project builds a wearable that captures motion data from an onboard IMU, cl
 
 ## Origin
 
-The project started from a university embedded systems course assignment: detect tremor and dyskinesia from a single accelerometer and gyroscope on a development board, using an FFT over 3 second windows and onboard indicators, with constraints such as no serial output and no additional hardware. That assignment is the origin of the idea, not the specification for this version. This project drops the classroom constraints and rebuilds the system as a production style embedded application, with custom driver development, RTOS level architecture, real time signal processing grounded in published methodology, and a BLE reporting protocol.
+The project started from a university embedded systems course assignment: detect tremor and dyskinesia from a single accelerometer and gyroscope on a development board, using Mbed OS and PlatformIO, an FFT over 3 second windows, and onboard indicators, with constraints such as no serial output and no additional hardware. That assignment is the origin of the idea, not the specification for this version.
+
+Arm has since discontinued Mbed OS, so building further on the original platform was not a realistic option regardless of whether the classroom constraints still applied. That meant a full rewrite rather than an incremental port. This project moved to Zephyr RTOS, an actively maintained RTOS with its own build system, devicetree, and driver model, and rebuilt the system from the ground up as a production style embedded application, with custom driver development, RTOS level architecture, real time signal processing grounded in published methodology, and a BLE reporting protocol.
 
 ## Hardware
 
